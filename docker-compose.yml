@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+# Notes:
+# - Frontend will be available at http://localhost:5173 (served by nginx)
+# - Backend API will be available at http://localhost:8000
+# - The backend already allows CORS from any origin in backend/main.py

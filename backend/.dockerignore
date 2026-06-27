@@ -1,0 +1,15 @@
+# Ignore Python and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+build/
+dist/
+*.egg-info
+
+# Docker related
+Dockerfile
+docker-compose.yml
