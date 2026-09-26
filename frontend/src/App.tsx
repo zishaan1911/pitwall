@@ -352,7 +352,7 @@ function Headline() {
         <Kpi
           k="Model optimum"
           v={best ? best.stints.map((s) => COMPOUND_SHORT[s.compound]).join("–") : "n/a"}
-          s={best ? `${best.stops}-stop · ${best.stints.map((s) => s.laps).join("/")} laps` : m.wet ? "wet race" : "insufficient data"}
+          s={best ? `${best.stops}-stop · ${best.stints.map((s) => s.laps).join("/")} laps` : m.wet ? "wet race" : m.kind === "S" ? "sprint: no stop rule" : "insufficient data"}
         />
         <Kpi k="Pit loss (green)" v={session.pit_loss.GREEN ? `${session.pit_loss.GREEN.median.toFixed(1)}s` : "—"} s={session.pit_loss.SC ? `SC stop ${session.pit_loss.SC.median.toFixed(1)}s` : `n=${session.pit_loss.GREEN?.n ?? 0}`} />
         <Kpi k="Fuel + track" v={session.model ? `${signed(session.model.lap_coef, 3)}s` : "—"} s="per lap, fitted" />

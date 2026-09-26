@@ -249,7 +249,8 @@ def _build_into(session, year: int, round_: int, kind: str, out: Path) -> None:
     loss = pitstops.summary(stop_rows)
     plan = None
     actual = []
-    if model is not None and "GREEN" in loss:
+    # Sprints have no mandatory stop, so a race strategy optimiser does not apply.
+    if kind == "R" and model is not None and "GREEN" in loss:
         plan = strategy.optimise(model, total, loss["GREEN"]["median"], wet=wet_race)
         if plan:
             by_kind = {k: v["median"] for k, v in loss.items() if isinstance(v, dict)}

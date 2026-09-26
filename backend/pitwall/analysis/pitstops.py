@@ -21,6 +21,8 @@ import pandas as pd
 from .degradation import DegModel
 
 PLAUSIBLE = (5.0, 60.0)  # seconds; outside this is damage, a penalty or a red flag
+SLOW_LANE = 4.0  # seconds over the median pit-lane time: a penalty served or a slow stop
+SLOW_STATIONARY = 6.0  # seconds stationary: a problem at the stop, not a strategy cost
 NEARBY = 20.0  # seconds; reference cars for a neutralised stop must be this close
 
 
@@ -114,21 +116,40 @@ def _loss_by_gaps(driver: str, lap: int, end: pd.DataFrame, pitting: pd.Series) 
     return float(np.median(changes))
 
 
+def lane_median(stops: list[dict]) -> float | None:
+    lanes = [s["lane"] for s in stops if s["lane"] and s["kind"] == "GREEN"]
+    return float(np.median(lanes)) if lanes else None
+
+
+def is_normal(stop: dict, lane_med: float | None) -> bool:
+    """A routine tyre stop whose loss says something about the strategy.
+
+    Excludes lap-1 stops (the standing start distorts the in-lap), penalties
+    and slow stops (from OpenF1 lane and stationary times where available),
+    and anything outside the plausible range.
+    """
+    if not stop["new_set"] or stop["loss"] is None or stop["lap"] <= 1:
+        return False
+    if not PLAUSIBLE[0] <= stop["loss"] <= PLAUSIBLE[1]:
+        return False
+    if lane_med is not None and stop["lane"] and stop["lane"] > lane_med + SLOW_LANE:
+        return False
+    return not (stop["stationary"] and stop["stationary"] > SLOW_STATIONARY)
+
+
 def summary(stops: list[dict]) -> dict:
     out = {}
+    lane_med = lane_median(stops)
     for kind in ("GREEN", "SC", "VSC"):
         vals = np.array([
-            s["loss"] for s in stops
-            if s["kind"] == kind and s["new_set"] and s["loss"] is not None
-            and PLAUSIBLE[0] <= s["loss"] <= PLAUSIBLE[1]
+            s["loss"] for s in stops if s["kind"] == kind and is_normal(s, lane_med)
         ])
         if len(vals):
             q1, q3 = np.percentile(vals, [25, 75])
             out[kind] = {"median": round(float(np.median(vals)), 3), "q1": round(float(q1), 3),
                          "q3": round(float(q3), 3), "n": int(len(vals))}
-    lanes = [s["lane"] for s in stops if s["lane"] and s["kind"] == "GREEN"]
-    if lanes:
-        out["lane_median"] = round(float(np.median(lanes)), 2)
+    if lane_med is not None:
+        out["lane_median"] = round(lane_med, 2)
     stationary = [s["stationary"] for s in stops if s["stationary"]]
     if stationary:
         out["stationary_median"] = round(float(np.median(stationary)), 2)

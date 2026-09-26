@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .pitstops import PLAUSIBLE
+from .pitstops import is_normal, lane_median
 
 MAX_GAP = 4.0
 MAX_OFFSET = 6
@@ -23,10 +23,11 @@ def ledger(laps: pd.DataFrame, stops: list[dict]) -> list[dict]:
     neutral = laps.groupby("lap")["neutralised"].any()
 
     by_driver: dict[str, list[dict]] = {}
+    lane_med = lane_median(stops)
     for s in stops:
         # Skip stops with damage, penalties or slow wheel changes: they are not
         # strategy calls and would swamp the ledger.
-        if s["new_set"] and s["loss"] is not None and PLAUSIBLE[0] <= s["loss"] <= PLAUSIBLE[1]:
+        if is_normal(s, lane_med):
             by_driver.setdefault(s["driver"], []).append(s)
 
     rows = []

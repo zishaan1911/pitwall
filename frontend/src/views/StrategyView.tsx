@@ -21,7 +21,9 @@ export function StrategyView() {
       ) : (
         <Panel title="Strategy optimiser">
           <Empty>
-            {session.meta.wet
+            {session.meta.kind === "S"
+              ? "Sprint: there is no mandatory stop, so the race strategy optimiser does not apply."
+              : session.meta.wet
               ? "Wet or mixed-conditions race: the dry-compound optimiser does not apply."
               : "Not enough data for a tyre model and a green-flag pit loss in this session."}
           </Empty>

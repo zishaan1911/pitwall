@@ -176,3 +176,16 @@ def test_actual_strategy_charges_loss_by_conditions(laps):
            strategy.evaluate_actual(laps, model, 50, stops, {"GREEN": 22.0, "RED": 0.0}, ref)}
     assert red["AAA"] == pytest.approx(green["AAA"] - 22.0)
     assert red["BBB"] == pytest.approx(green["BBB"])
+
+
+def test_abnormal_stops_do_not_set_pit_loss(laps):
+    stops = pitstops.ledger(laps, degradation.fit(laps))
+    for s in stops:
+        s["lane"], s["stationary"] = 20.0, 2.4
+    baseline = pitstops.summary(stops)["GREEN"]
+    slow = dict(stops[0], loss=45.0, lane=35.0)  # drive-through length: a penalty
+    stuck = dict(stops[1], loss=40.0, stationary=9.0)  # wheel-nut problem
+    opening = dict(stops[2], lap=1, loss=48.0)  # lap-1 damage stop
+    for s in (slow, stuck, opening):
+        assert not pitstops.is_normal(s, 20.0)
+    assert pitstops.summary(stops + [slow, stuck, opening])["GREEN"] == baseline

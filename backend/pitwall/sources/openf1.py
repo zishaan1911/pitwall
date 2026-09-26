@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import httpx
 import pandas as pd
 
 from .http import get_json
@@ -13,8 +14,13 @@ PACE = 0.4  # seconds between calls; the free tier allows 3 req/s
 
 
 def _get(endpoint: str, **params) -> list[dict]:
-    data = get_json(f"{BASE}/{endpoint}", params=params, min_interval=PACE)
-    # OpenF1 answers "no data" with {"detail": "No results found."}
+    try:
+        data = get_json(f"{BASE}/{endpoint}", params=params, min_interval=PACE)
+    except httpx.HTTPStatusError as exc:
+        # "No results" is a 404 (older API versions sent 200 with a detail body)
+        if exc.response.status_code == 404:
+            return []
+        raise
     return data if isinstance(data, list) else []
 
 
