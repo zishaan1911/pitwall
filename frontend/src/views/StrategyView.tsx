@@ -157,7 +157,18 @@ function PitLossPanel() {
       title="Pit loss"
       span={5}
       sub="measured from this race's stops"
-      note="Loss = in-lap + out-lap − the model's prediction for those two laps on track. Lane time and stationary time come from OpenF1 where the feed carries them."
+      note={
+        <>
+          Green: in-lap + out-lap − the model's prediction for those two laps on track. SC/VSC: the same two laps
+          against the median of the cars that stayed out. Lane and stationary times come from OpenF1 where the feed
+          carries them.
+          {session.meta.wet && (
+            <span className="accent">
+              {" "}Mixed conditions: these stops include tyre-crossover effects, so treat them as indicative.
+            </span>
+          )}
+        </>
+      }
     >
       <div className="stat-grid">
         <Stat

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pitwall"
-version = "2.0.1"
+version = "2.0.2"
 description = "Race engineering analysis for real Formula 1 sessions"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -22,6 +22,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 pitwall-export = "pitwall.export:main"
+pitwall-publish = "pitwall.publish:main"
 
 [tool.setuptools.packages.find]
 include = ["pitwall*"]

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import fastf1
 import pandas as pd
+from fastf1.req import RateLimitExceededError
 
 SESSION_NAMES = {"R": "Race", "S": "Sprint"}
 
@@ -42,6 +43,26 @@ def _missing(session) -> list[str]:
     return missing
 
 
+def _rate_limited() -> bool:
+    """True if FastF1's own hourly request budget is exhausted.
+
+    FastF1 turns request errors inside `Session.load` into warnings, so read
+    its limiter state (private, hence the defensive access) instead of waiting
+    for an exception that may never surface.
+    """
+    try:
+        limits = fastf1.req._SessionWithRateLimiting._RATE_LIMITS
+        for limiters in limits.values():
+            for lim in limiters:
+                stamps = getattr(lim, "_timestamps", None)
+                if (stamps is not None and len(stamps) == stamps.maxlen
+                        and stamps[0] > time.time() - lim._interval):
+                    return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 def load(year: int, round_: int, kind: str, attempts: int = 3):
     """Load a session, retrying while parts of it are missing.
 
@@ -51,6 +72,8 @@ def load(year: int, round_: int, kind: str, attempts: int = 3):
         session = fastf1.get_session(year, round_, kind)
         session.load(laps=True, telemetry=True, weather=True, messages=True)
         missing = _missing(session)
+        if missing and _rate_limited():
+            raise RateLimitExceededError("FastF1 request limit reached")
         if not missing:
             return session
         # Timing is there and only telemetry is missing: some sessions genuinely lack it.

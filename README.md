@@ -6,7 +6,7 @@ uses it to score strategies, measure pit loss and audit undercuts. The results a
 pit-wall style console.
 
 **[Live demo →](https://zishaan1911.github.io/pitwall/)** (every Grand Prix and sprint of the current
-and previous season, refreshed each Monday)
+and previous season)
 
 ![pitwall dashboard](docs/screenshot.png)
 
@@ -71,8 +71,11 @@ that most of the field ran.
 
 ### Pit loss
 
-For each stop: in-lap + out-lap − the model's prediction for those two laps on track, using the
-driver's own μ and the real tyre ages. Stops are split by conditions: green, SC and VSC.
+Green-flag stops: in-lap + out-lap − the model's prediction for those two laps on track, using the
+driver's own μ and the real tyre ages. Safety car and VSC stops are measured against the median
+time of the cars that stayed out on the same laps, because the model knows nothing about
+neutralised pace. In mixed-weather races these numbers include tyre-crossover effects and are
+flagged as indicative.
 
 ### Strategy optimiser
 
@@ -112,8 +115,12 @@ The dashboard reads the same files in both modes:
 
 - **Live** (`/api`): FastAPI builds any session from 2018 onward on first request (about a
   minute), then serves it from disk.
-- **Static** (`./data`): the GitHub Pages workflow prebuilds the last two seasons. Bundles are
-  cached between runs, so the Monday job only fetches the new race.
+- **Static** (`./data`): the exporter prebuilds the last two seasons for GitHub Pages.
+
+Since mid-2026, F1's live-timing archive answers 403 to cloud hosts, GitHub Actions included
+([example](https://github.com/emsqrd/f1fantasyapp/issues/437)). Bundles are therefore built
+on an ordinary connection and published to the `data` branch, and the Pages workflow deploys
+the dashboard with them. The API server has the same constraint: run it locally, not on a VPS.
 
 ## Running it
 
@@ -141,6 +148,16 @@ cd backend && python -m pitwall.export --season 2025      # writes JSON bundles 
 cd ../frontend && npm run dev:static                       # serves the app over ../data
 ```
 
+To update the live site after a race weekend, run this from `backend/`:
+
+```bash
+python -m pitwall.export     # builds only the sessions that are new since the last run
+python -m pitwall.publish    # pushes ../data to the data branch and triggers the deploy
+```
+
+FastF1 allows 500 requests per rolling hour, and a cold session needs about 15. On a first
+full build the exporter pauses when it hits the limit and carries on.
+
 Settings (environment variables): `PITWALL_DATA` (bundle directory, default `data/`),
 `PITWALL_CACHE` (FastF1 cache), `PITWALL_SEASONS` (e.g. `2024,2025`).
 
@@ -151,7 +168,8 @@ cd backend && pytest        # tyre model, optimiser vs brute force, pit loss, un
 cd frontend && npm test     # timing tower classification, helpers
 ```
 
-CI runs ruff, pytest, oxlint, vitest and a production build on every push.
+CI runs ruff, pytest, oxlint, vitest and a production build on every push. The model tests
+use synthetic races with known parameters, so they need no network access.
 
 ## Licence
 

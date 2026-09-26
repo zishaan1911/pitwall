@@ -6,8 +6,11 @@ out-lap, minus what those two laps would have taken on track.
 * Green flag: the reference is the tyre model's prediction for that driver,
   compound and tyre age.
 * Safety car / VSC: the model knows nothing about neutralised pace, so the
-  reference is the median time of the cars that stayed out on those laps.
-  Everyone is slowed, which makes these stops much cheaper.
+  loss is measured as the change in gap to every car that did not stop,
+  from the line before the stop to the line after the out-lap. Gaps are
+  taken at the same point on track, so it does not matter whether the SC came
+  out early or late in a given car's lap. Only cars within 20 s count, and
+  the median over cars ahead and behind cancels the field bunching up.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import pandas as pd
 from .degradation import DegModel
 
 PLAUSIBLE = (5.0, 60.0)  # seconds; outside this is damage, a penalty or a red flag
+NEARBY = 20.0  # seconds; reference cars for a neutralised stop must be this close
 
 
 def _kind(status: str) -> str:
@@ -38,7 +42,8 @@ def ledger(laps: pd.DataFrame, model: DegModel | None,
     for p in openf1_pits or []:
         by_key[(str(p.get("driver_number")), int(p.get("lap_number") or 0))] = p
 
-    stayed_out = laps[~laps["pit_in"] & ~laps["pit_out"]].groupby("lap")["time"].median()
+    end = laps.pivot_table(index="lap", columns="driver", values="end")
+    pitting = laps[laps["pit_in"] | laps["pit_out"]].groupby("driver")["lap"].agg(set)
 
     stops = []
     for driver, g in laps.groupby("driver", sort=False):
@@ -53,7 +58,7 @@ def ledger(laps: pd.DataFrame, model: DegModel | None,
                 or (pd.notna(a["age"]) and pd.notna(b["age"]) and b["age"] < a["age"])
             )
             if kind in ("SC", "VSC"):
-                loss = _loss_neutralised(a, b, lap, stayed_out)
+                loss = _loss_by_gaps(driver, lap, end, pitting)
             elif kind == "GREEN":
                 loss = _loss(driver, a, b, lap, g, model)
             else:
@@ -90,13 +95,23 @@ def _loss(driver, a, b, lap, g, model: DegModel | None) -> float | None:
     return float(a["time"] + b["time"] - 2 * near.median())
 
 
-def _loss_neutralised(a, b, lap, stayed_out: pd.Series) -> float | None:
-    if pd.isna(a["time"]) or pd.isna(b["time"]):
+def _loss_by_gaps(driver: str, lap: int, end: pd.DataFrame, pitting: pd.Series) -> float | None:
+    before, after = lap - 1, lap + 1
+    if before < 1 or before not in end.index or after not in end.index:
         return None
-    ref_in, ref_out = stayed_out.get(lap), stayed_out.get(lap + 1)
-    if ref_in is None or ref_out is None or pd.isna(ref_in) or pd.isna(ref_out):
+    window = set(range(lap - 1, lap + 3))
+    changes = []
+    for other in end.columns:
+        if other == driver or window & pitting.get(other, set()):
+            continue
+        g0 = end.at[before, driver] - end.at[before, other]
+        g1 = end.at[after, driver] - end.at[after, other]
+        # Only cars close by on track saw the neutralisation at the same moment.
+        if pd.notna(g0) and pd.notna(g1) and abs(g0) <= NEARBY:
+            changes.append(g1 - g0)
+    if len(changes) < 2:
         return None
-    return float(a["time"] + b["time"] - ref_in - ref_out)
+    return float(np.median(changes))
 
 
 def summary(stops: list[dict]) -> dict:

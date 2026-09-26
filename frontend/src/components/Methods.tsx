@@ -58,9 +58,10 @@ export function Methods({ onClose }: { onClose: () => void }) {
 
         <h3>PIT LOSS</h3>
         <p>
-          For each stop: in-lap + out-lap − the model's prediction for those two laps on track, using the driver's own μ
-          and the actual tyre ages. Stops are split by conditions: green, SC and VSC. The strategy optimiser uses the green
-          median.
+          Green-flag stops: in-lap + out-lap − the model's prediction for those two laps on track, using the driver's
+          own μ and the actual tyre ages. Safety car and VSC stops are measured against the median time of the cars that
+          stayed out on the same laps, since the model knows nothing about neutralised pace. The strategy optimiser uses
+          the green median.
         </p>
 
         <h3>STRATEGY OPTIMISER</h3>

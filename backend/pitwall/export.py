@@ -1,9 +1,10 @@
 """Pre-build bundles for the static site.
 
-    python -m pitwall.export --out ../frontend/public/data --season 2025 --season 2026
+    python -m pitwall.export --season 2025 --season 2026     # writes ../data
 
 Sessions that already have a bundle are skipped unless --force is given, so a
-scheduled run only builds the races that happened since the last one.
+run after a race weekend only builds the new sessions. Publish the result
+with `python -m pitwall.publish`.
 """
 
 from __future__ import annotations
@@ -13,9 +14,13 @@ import sys
 import time
 from pathlib import Path
 
+from fastf1.req import RateLimitExceededError
+
 from . import catalog, config
 from .bundle import build
 from .sources import f1
+
+RATE_LIMIT_WAIT = 15 * 60  # FastF1 allows 500 requests in any rolling hour
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             label = f"{year} R{round_:02d} {kind} {name}"
             t = time.monotonic()
             try:
-                build(year, round_, kind, out)
+                _build_waiting_out_rate_limit(year, round_, kind, out, label)
                 built += 1
                 print(f"built   {label}  ({time.monotonic() - t:.0f}s)", flush=True)
             except Exception as exc:  # noqa: BLE001 - keep going, report at the end
@@ -73,6 +78,18 @@ def main(argv: list[str] | None = None) -> int:
     for label in failed:
         print(f"  - {label}")
     return 1 if failed and not (built or skipped) else 0
+
+
+def _build_waiting_out_rate_limit(year: int, round_: int, kind: str, out: Path, label: str) -> None:
+    for _ in range(8):
+        try:
+            build(year, round_, kind, out)
+            return
+        except RateLimitExceededError:
+            print(f"waiting {label}: FastF1 request limit reached, retrying in "
+                  f"{RATE_LIMIT_WAIT // 60} min", flush=True)
+            time.sleep(RATE_LIMIT_WAIT)
+    build(year, round_, kind, out)
 
 
 if __name__ == "__main__":
