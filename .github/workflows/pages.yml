@@ -1,0 +1,88 @@
+name: Build data and deploy site
+
+# Rebuilds the static site. Race bundles are cached between runs, so a
+# scheduled run only fetches the sessions that happened since the last one.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC, after the race weekend
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild every bundle
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: pip install ./backend
+
+      # Bump pitwall.__version__ when the bundle format changes; that
+      # invalidates this cache and rebuilds everything.
+      - name: Restore bundles
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: bundles-${{ hashFiles('backend/pitwall/__init__.py') }}-${{ github.run_id }}
+          restore-keys: bundles-${{ hashFiles('backend/pitwall/__init__.py') }}-
+
+      - name: Build new bundles
+        env:
+          PITWALL_CACHE: ${{ runner.temp }}/fastf1
+          PYTHONWARNINGS: ignore
+        run: python -m pitwall.export --out data ${{ inputs.force && '--force' || '' }}
+
+      - name: Save bundles
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: bundles-${{ hashFiles('backend/pitwall/__init__.py') }}-${{ github.run_id }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_DATA_BASE: ./data
+        run: |
+          npm ci
+          npm run build
+          cp -r ../data dist/data
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
