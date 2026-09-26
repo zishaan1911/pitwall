@@ -10,6 +10,7 @@ with `python -m pitwall.publish`.
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -30,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--round", type=int, action="append", help="limit to these rounds")
     ap.add_argument("--kinds", default="R,S", help="session kinds, e.g. R or R,S")
     ap.add_argument("--force", action="store_true", help="rebuild existing bundles")
+    ap.add_argument("--keep-cache", action="store_true",
+                    help="keep FastF1's parsed session cache (~100 MB per session)")
     args = ap.parse_args(argv)
 
     seasons = args.season or config.SEASONS
@@ -66,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as exc:  # noqa: BLE001 - keep going, report at the end
                 retry.append((year, round_, kind, name))
                 print(f"failed  {label} (pass {attempt}): {type(exc).__name__}: {exc}", flush=True)
+            if not args.keep_cache:
+                _prune_cache(config.CACHE_DIR)
         pending = retry
         if not pending:
             break
@@ -78,6 +83,17 @@ def main(argv: list[str] | None = None) -> int:
     for label in failed:
         print(f"  - {label}")
     return 1 if failed and not (built or skipped) else 0
+
+
+def _prune_cache(cache: Path) -> None:
+    """Drop FastF1's parsed session data once a bundle is written.
+
+    Those pickles take ~100 MB per session and are only useful for rebuilding
+    the same session. The raw HTTP cache (much smaller) is kept.
+    """
+    for year_dir in cache.iterdir():
+        if year_dir.is_dir() and year_dir.name.isdigit():
+            shutil.rmtree(year_dir, ignore_errors=True)
 
 
 def _build_waiting_out_rate_limit(year: int, round_: int, kind: str, out: Path, label: str) -> None:

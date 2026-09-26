@@ -156,7 +156,9 @@ python -m pitwall.publish    # pushes ../data to the data branch and triggers th
 ```
 
 FastF1 allows 500 requests per rolling hour, and a cold session needs about 15. On a first
-full build the exporter pauses when it hits the limit and carries on.
+full build the exporter pauses when it hits the limit and carries on. It also deletes FastF1's
+parsed data (about 100 MB per session) as soon as each bundle is written, so a full two-season
+build needs well under 1 GB of disk. Pass `--keep-cache` to keep it for repeated rebuilds.
 
 Settings (environment variables): `PITWALL_DATA` (bundle directory, default `data/`),
 `PITWALL_CACHE` (FastF1 cache), `PITWALL_SEASONS` (e.g. `2024,2025`).

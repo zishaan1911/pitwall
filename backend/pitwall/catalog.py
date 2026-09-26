@@ -33,9 +33,12 @@ def index(root: Path, seasons: list[int], *, mode: str, only_built: bool) -> dic
 
 
 def write_index(root: Path, seasons: list[int]) -> Path:
+    """Index every season that has bundles on disk, not just the ones just built."""
+    on_disk = {int(p.name) for p in root.iterdir() if p.is_dir() and p.name.isdigit()}
     path = root / "index.json"
     path.write_text(
-        json.dumps(index(root, seasons, mode="static", only_built=True), separators=(",", ":")),
+        json.dumps(index(root, sorted(on_disk | set(seasons)), mode="static", only_built=True),
+                   separators=(",", ":")),
         encoding="utf-8",
     )
     return path
