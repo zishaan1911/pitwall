@@ -42,6 +42,7 @@ export interface Meta {
   start_s: number;
   end_s: number;
   total_laps: number;
+  scheduled_laps: number;
   wet: boolean;
   generated_at: string;
   pitwall: string;

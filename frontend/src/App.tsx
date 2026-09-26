@@ -341,6 +341,7 @@ function Headline() {
         </div>
         <div className="event-sub">
           ROUND {m.round} · {m.circuit?.name ?? m.location}, {m.country} · {m.date} · {m.total_laps} LAPS
+          {m.scheduled_laps > m.total_laps && <span className="accent"> OF {m.scheduled_laps} (SHORTENED)</span>}
           {session.track ? ` · ${(session.track.length / 1000).toFixed(3)} KM` : ""}
           {m.wet && <span className="accent"> · WET</span>}
         </div>

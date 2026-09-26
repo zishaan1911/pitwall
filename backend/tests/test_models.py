@@ -61,9 +61,13 @@ def test_safety_car_stops_are_classified_separately():
                     "CCC": [("HARD", 30), ("MEDIUM", 20)], "DDD": [("MEDIUM", 20), ("HARD", 30)]},
                    sc_laps=(20, 21))
     stops = pitstops.ledger(df, degradation.fit(df))
-    kinds = {(s["driver"], s["lap"]): s["kind"] for s in stops}
-    assert kinds[("AAA", 20)] == "SC"
-    assert kinds[("BBB", 25)] == "GREEN"
+    by_key = {(s["driver"], s["lap"]): s for s in stops}
+    assert by_key[("AAA", 20)]["kind"] == "SC"
+    assert by_key[("BBB", 25)]["kind"] == "GREEN"
+    # Measured against the cars that stayed out under the SC, not green-flag pace,
+    # so the slow SC laps are not counted as pit loss.
+    assert by_key[("AAA", 20)]["loss"] == pytest.approx(22.0, abs=1.0)
+    assert by_key[("DDD", 20)]["loss"] == pytest.approx(22.0, abs=1.0)
 
 
 def brute_force(model, total, loss, compounds):

@@ -49,7 +49,7 @@ def race_laps(
                 )
                 status = "1"
                 if lap in sc_laps:
-                    t += 25.0
+                    t = 115.0 + rng.normal(0, 0.05)  # the whole field follows the safety car
                     status = "4"
                 pit_in = age == length and lap < total
                 pit_out = age == 1 and stint_no > 1

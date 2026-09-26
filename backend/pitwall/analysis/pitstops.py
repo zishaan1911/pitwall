@@ -1,9 +1,13 @@
 """Pit stop ledger and measured pit loss.
 
 Pit loss is what a stop costs compared with staying out: the in-lap plus the
-out-lap, minus what the tyre model says those two laps would have taken on
-track. Stops under a safety car or VSC are measured separately because the
-field is slowed, which makes them much cheaper.
+out-lap, minus what those two laps would have taken on track.
+
+* Green flag: the reference is the tyre model's prediction for that driver,
+  compound and tyre age.
+* Safety car / VSC: the model knows nothing about neutralised pace, so the
+  reference is the median time of the cars that stayed out on those laps.
+  Everyone is slowed, which makes these stops much cheaper.
 """
 
 from __future__ import annotations
@@ -34,6 +38,8 @@ def ledger(laps: pd.DataFrame, model: DegModel | None,
     for p in openf1_pits or []:
         by_key[(str(p.get("driver_number")), int(p.get("lap_number") or 0))] = p
 
+    stayed_out = laps[~laps["pit_in"] & ~laps["pit_out"]].groupby("lap")["time"].median()
+
     stops = []
     for driver, g in laps.groupby("driver", sort=False):
         g = g.set_index("lap").sort_index()
@@ -46,7 +52,12 @@ def ledger(laps: pd.DataFrame, model: DegModel | None,
                 a["compound"] != b["compound"]
                 or (pd.notna(a["age"]) and pd.notna(b["age"]) and b["age"] < a["age"])
             )
-            loss = _loss(driver, a, b, lap, g, model)
+            if kind in ("SC", "VSC"):
+                loss = _loss_neutralised(a, b, lap, stayed_out)
+            elif kind == "GREEN":
+                loss = _loss(driver, a, b, lap, g, model)
+            else:
+                loss = None  # red flag: the car sits in the pit lane while the race is stopped
             of1 = by_key.get((str(numbers.get(driver, "")) if numbers else "", int(lap)), {})
             stops.append({
                 "driver": driver,
@@ -77,6 +88,15 @@ def _loss(driver, a, b, lap, g, model: DegModel | None) -> float | None:
     if len(near) < 3:
         return None
     return float(a["time"] + b["time"] - 2 * near.median())
+
+
+def _loss_neutralised(a, b, lap, stayed_out: pd.Series) -> float | None:
+    if pd.isna(a["time"]) or pd.isna(b["time"]):
+        return None
+    ref_in, ref_out = stayed_out.get(lap), stayed_out.get(lap + 1)
+    if ref_in is None or ref_out is None or pd.isna(ref_in) or pd.isna(ref_out):
+        return None
+    return float(a["time"] + b["time"] - ref_in - ref_out)
 
 
 def summary(stops: list[dict]) -> dict:

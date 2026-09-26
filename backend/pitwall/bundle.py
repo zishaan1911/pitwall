@@ -102,7 +102,9 @@ def _swap(tmp: Path, target: Path) -> None:
 def _build_into(session, year: int, round_: int, kind: str, out: Path) -> None:
     sources: dict[str, dict] = {"fastf1": {"ok": True, "version": fastf1.__version__}}
     laps = normalise(session.laps)
-    total = int(getattr(session, "total_laps", None) or laps["lap"].max())
+    # Laps actually run, which is fewer than scheduled if the race was shortened.
+    total = int(laps["lap"].max())
+    scheduled = int(getattr(session, "total_laps", None) or total)
     ends = leader_lap_ends(laps)
     t0: datetime = session.t0_date.to_pydatetime()
     start_s = float(laps["start"].min())
@@ -320,6 +322,7 @@ def _build_into(session, year: int, round_: int, kind: str, out: Path) -> None:
         "start_s": round(start_s, 1),
         "end_s": round(end_s, 1),
         "total_laps": total,
+        "scheduled_laps": scheduled,
         "wet": wet_race,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "pitwall": __version__,
