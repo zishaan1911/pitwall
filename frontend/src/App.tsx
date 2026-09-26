@@ -1,281 +1,372 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import {
-  fetchRaceState,
-  fetchOptimalStrategy,
-  fetchTireDegradation,
-  fetchTracks,
-} from "./api";
-import type { RaceState, OptimalStrategy, TireDegradationCurve, TrackInfo, Compound } from "./types";
-import { TireDegradationChart } from "./components/TireDegradationChart";
-import { GapChart } from "./components/GapChart";
-import { StrategyViz } from "./components/StrategyViz";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { DATA_BASE, fetchCatalog, fetchSession } from "./api";
+import { Methods } from "./components/Methods";
+import { Scrubber } from "./components/Scrubber";
 import { TimingTower } from "./components/TimingTower";
-import "./App.css";
+import { RaceContext, type RaceCtx, useRace } from "./context";
+import { driverStyles } from "./lib/colors";
+import { COMPOUND_SHORT, lapTime, signed } from "./lib/format";
+import { fastestLap } from "./lib/race";
+import type { Catalog, Kind, Session } from "./types";
+import { ConditionsView } from "./views/ConditionsView";
+import { RaceView } from "./views/RaceView";
+import { StrategyView } from "./views/StrategyView";
+import { TelemetryView } from "./views/TelemetryView";
+import { TyresView } from "./views/TyresView";
 
-const COMPOUNDS: Compound[] = ["SOFT", "MEDIUM", "HARD"];
-const COMPOUND_COLORS: Record<string, string> = {
-  SOFT: "#E8002D",
-  MEDIUM: "#FFF200",
-  HARD: "#C8C8C8",
-};
+const TABS = [
+  { id: "race", label: "RACE", View: RaceView },
+  { id: "tyres", label: "TYRES", View: TyresView },
+  { id: "strategy", label: "STRATEGY", View: StrategyView },
+  { id: "telemetry", label: "TELEMETRY", View: TelemetryView },
+  { id: "conditions", label: "CONDITIONS", View: ConditionsView },
+] as const;
+type TabId = (typeof TABS)[number]["id"];
 
-type Tab = "timing" | "gaps" | "tyres" | "strategy";
-type DegMode = "grip" | "penalty";
+interface Route {
+  year: number;
+  round: number;
+  kind: Kind;
+  tab: TabId;
+}
+
+function parseHash(): Partial<Route> {
+  const m = /^#\/(\d{4})\/(\d{1,2})-([RS])(?:\/(\w+))?/.exec(window.location.hash);
+  if (!m) return {};
+  const tab = TABS.find((t) => t.id === m[4])?.id ?? "race";
+  return { year: Number(m[1]), round: Number(m[2]), kind: m[3] as Kind, tab };
+}
+
+function writeHash(r: Route) {
+  const h = `#/${r.year}/${String(r.round).padStart(2, "0")}-${r.kind}/${r.tab}`;
+  if (window.location.hash !== h) window.history.replaceState(null, "", h);
+}
 
 export default function App() {
-  const [tracks, setTracks] = useState<TrackInfo[]>([]);
-  const [selectedTrack, setSelectedTrack] = useState("Bahrain");
-  const [currentLap, setCurrentLap] = useState(18);
-  const [totalLaps, setTotalLaps] = useState(57);
-  const [raceState, setRaceState] = useState<RaceState | null>(null);
-  const [strategy, setStrategy] = useState<OptimalStrategy | null>(null);
-  const [degCurves, setDegCurves] = useState<TireDegradationCurve[]>([]);
-  const [activeTab, setActiveTab] = useState<Tab>("timing");
-  const [degMode, setDegMode] = useState<DegMode>("grip");
-  const [loading, setLoading] = useState(false);
-  const [simRunning, setSimRunning] = useState(false);
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [route, setRoute] = useState<Route | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const simRef = useRef<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showMethods, setShowMethods] = useState(false);
 
-  const loadData = useCallback(async (track: string, lap: number) => {
+  useEffect(() => {
+    fetchCatalog()
+      .then((c) => {
+        setCatalog(c);
+        const h = parseHash();
+        const latest = pickLatest(c);
+        if (h.year && h.round && h.kind) setRoute({ year: h.year, round: h.round, kind: h.kind, tab: h.tab ?? "race" });
+        else if (latest) setRoute({ ...latest, tab: "race" });
+      })
+      .catch((e: Error) => setError(`Could not load the session index (${e.message}).`));
+    const onHash = () => {
+      const h = parseHash();
+      if (h.year && h.round && h.kind) setRoute({ year: h.year, round: h.round, kind: h.kind, tab: h.tab ?? "race" });
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
+    if (!route) return;
+    writeHash(route);
+  }, [route]);
+
+  const key = route ? `${route.year}/${route.round}/${route.kind}` : null;
+  useEffect(() => {
+    if (!route) return;
+    let live = true;
     setLoading(true);
     setError(null);
-    try {
-      const [state, strat, ...curves] = await Promise.all([
-        fetchRaceState(track, lap),
-        fetchOptimalStrategy(track, ["MEDIUM", "HARD"]),
-        ...COMPOUNDS.map((c) => fetchTireDegradation(c, track)),
-      ]);
-      setRaceState(state);
-      setTotalLaps(state.total_laps);
-      setStrategy(strat);
-      setDegCurves(curves as TireDegradationCurve[]);
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || e?.message || "Failed to connect to backend");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchTracks().then(setTracks).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    loadData(selectedTrack, currentLap);
-  }, [selectedTrack, currentLap, loadData]);
-
-  useEffect(() => {
-    if (simRunning) {
-      simRef.current = window.setInterval(() => {
-        setCurrentLap((l) => {
-          if (l >= totalLaps) { setSimRunning(false); return l; }
-          return l + 1;
-        });
-      }, 2000);
-    } else {
-      if (simRef.current) clearInterval(simRef.current);
-    }
-    return () => { if (simRef.current) clearInterval(simRef.current); };
-  }, [simRunning, totalLaps]);
-
-  const pctComplete = totalLaps > 0 ? (currentLap / totalLaps) * 100 : 0;
-
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "timing", label: "Timing Tower" },
-    { id: "gaps", label: "Gap Chart" },
-    { id: "tyres", label: "Tyre Model" },
-    { id: "strategy", label: "Pit Strategy" },
-  ];
+    fetchSession(route.year, route.round, route.kind)
+      .then((s) => {
+        if (!live) return;
+        setSession(s);
+        document.title = `${s.meta.year} ${s.meta.event} ${s.meta.session} · pitwall`;
+      })
+      .catch((e: Error) => live && setError(e.message))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="header-left">
-          <div className="logo"><span className="logo-dot" />PIT WALL</div>
-          <select
-            className="track-select"
-            value={selectedTrack}
-            onChange={(e) => { setSelectedTrack(e.target.value); setCurrentLap(1); setSimRunning(false); }}
-          >
-            {tracks.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
-            {!tracks.length && <option value="Bahrain">Bahrain</option>}
-          </select>
-        </div>
-
-        <div className="header-center">
-          <div className="lap-display">
-            LAP <span className="lap-num">{currentLap}</span>
-            <span className="lap-total"> / {totalLaps}</span>
+      <TopBar
+        catalog={catalog}
+        route={route}
+        session={session}
+        onRoute={(r) => setRoute((cur) => (cur ? { ...cur, ...r } : cur))}
+        onMethods={() => setShowMethods(true)}
+      />
+      {error && !loading && (
+        <div className="loading">
+          <div>
+            <div className="error">SESSION UNAVAILABLE</div>
+            <div className="dim">{error}</div>
           </div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${pctComplete}%` }} />
-          </div>
-        </div>
-
-        <div className="header-right">
-          {raceState && (
-            <div className="temp-badge">{raceState.track_temp}°C <span className="temp-label">TRACK</span></div>
-          )}
-          <button
-            className={`sim-btn ${simRunning ? "active" : ""}`}
-            onClick={() => setSimRunning((r) => !r)}
-            disabled={currentLap >= totalLaps}
-          >
-            {simRunning ? "⏸ PAUSE" : "▶ SIM"}
-          </button>
-          <input
-            type="range" min={1} max={totalLaps} value={currentLap} step={1}
-            onChange={(e) => { setSimRunning(false); setCurrentLap(Number(e.target.value)); }}
-            style={{ width: 120 }}
-          />
-        </div>
-      </header>
-
-      {error && (
-        <div className="error-banner">
-          <strong>Backend unreachable:</strong> {error}
-          <span className="error-hint"> — Run <code>uvicorn main:app --reload</code> in <code>/backend</code></span>
         </div>
       )}
-
-      <nav className="tabs">
-        {tabs.map((t) => (
-          <button key={t.id} className={`tab-btn ${activeTab === t.id ? "active" : ""}`} onClick={() => setActiveTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
-
-      <main className="main">
-        {loading && <div className="loading-overlay"><div className="spinner" /></div>}
-
-        {activeTab === "timing" && raceState && (
-          <div className="panel">
-            <div className="panel-header">
-              <h2>Live timing</h2>
-              <span className="panel-sub">Lap {currentLap} of {totalLaps}</span>
+      {loading && (
+        <div className="loading">
+          <div>
+            LOADING SESSION
+            <div className="spinner" />
+            <div className="dim" style={{ fontSize: 10 }}>
+              {DATA_BASE.startsWith("/api")
+                ? "first request pulls timing, telemetry, weather and radio from the archives (~1 min)"
+                : "reading prebuilt bundle"}
             </div>
-            <TimingTower drivers={raceState.drivers} />
-            {raceState.drivers.some((d) => d.undercut_threat) && (
-              <div className="alert-section">
-                <div className="alert-header">⚡ STRATEGY ALERTS</div>
-                {raceState.drivers.filter((d) => d.undercut_threat).map((d) => (
-                  <div key={d.driver} className="alert-card">
-                    <strong>{d.driver}</strong> undercut window in{" "}
-                    <strong>{d.undercut_threat!.laps_until_window}</strong> laps —{" "}
-                    estimated <strong>+{d.undercut_threat!.estimated_benefit_s}s</strong> benefit
-                  </div>
+          </div>
+        </div>
+      )}
+      {session && route && !loading && !error && (
+        <Dashboard
+          key={key}
+          session={session}
+          tab={route.tab}
+          onTab={(tab) => setRoute({ ...route, tab })}
+        />
+      )}
+      <footer className="footer">
+        <span>pitwall v{session?.meta.pitwall ?? "2"}</span>
+        <span>
+          data: <a href="https://github.com/theOehrly/Fast-F1">FastF1</a> (F1 live timing archive) ·{" "}
+          <a href="https://openf1.org">OpenF1</a> · <a href="https://github.com/jolpica/jolpica-f1">Jolpica</a> ·{" "}
+          <a href="https://open-meteo.com">Open-Meteo</a>
+        </span>
+        {session && <span>bundle built {session.meta.generated_at.replace("T", " ").slice(0, 16)} UTC</span>}
+        <span>Unofficial. Not associated with Formula 1 companies.</span>
+        <span style={{ marginLeft: "auto" }}>
+          <a href="https://github.com/zishaan1911/pitwall">source</a>
+        </span>
+      </footer>
+      {showMethods && <Methods onClose={() => setShowMethods(false)} />}
+    </div>
+  );
+}
+
+function pickLatest(c: Catalog): Omit<Route, "tab"> | null {
+  for (const season of c.seasons) {
+    for (const ev of [...season.events].reverse()) {
+      const kinds = c.mode === "static" ? ev.built : ev.sessions;
+      if (kinds.includes("R")) return { year: season.year, round: ev.round, kind: "R" };
+      if (kinds.length) return { year: season.year, round: ev.round, kind: kinds[0] };
+    }
+  }
+  return null;
+}
+
+function TopBar({
+  catalog,
+  route,
+  session,
+  onRoute,
+  onMethods,
+}: {
+  catalog: Catalog | null;
+  route: Route | null;
+  session: Session | null;
+  onRoute: (r: Partial<Route>) => void;
+  onMethods: () => void;
+}) {
+  const season = catalog?.seasons.find((s) => s.year === route?.year);
+  const event = season?.events.find((e) => e.round === route?.round);
+  const avail = (kinds: Kind[], built: Kind[]) => (catalog?.mode === "static" ? built : kinds);
+
+  return (
+    <div className="topbar">
+      <div className="brand">
+        <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden>
+          <rect x="1" y="1" width="20" height="20" fill="none" stroke="#ffb400" strokeWidth="1.5" />
+          <path d="M5 16 L9 8 L12 13 L14 10 L17 16" fill="none" stroke="#ffb400" strokeWidth="1.5" />
+        </svg>
+        PITWALL <small>RACE ENGINEERING</small>
+      </div>
+      {catalog && (
+        <div className="picker">
+          <select
+            className="select"
+            value={route?.year ?? ""}
+            onChange={(e) => {
+              const y = Number(e.target.value);
+              const s = catalog.seasons.find((x) => x.year === y);
+              const ev = s?.events.filter((ev) => avail(ev.sessions, ev.built).length).at(-1);
+              if (ev) onRoute({ year: y, round: ev.round, kind: avail(ev.sessions, ev.built).includes("R") ? "R" : avail(ev.sessions, ev.built)[0] });
+            }}
+            aria-label="Season"
+          >
+            {catalog.seasons.map((s) => (
+              <option key={s.year} value={s.year}>
+                {s.year}
+              </option>
+            ))}
+          </select>
+          <select
+            className="select"
+            value={route?.round ?? ""}
+            onChange={(e) => {
+              const r = Number(e.target.value);
+              const ev = season?.events.find((x) => x.round === r);
+              const kinds = ev ? avail(ev.sessions, ev.built) : [];
+              onRoute({ round: r, kind: kinds.includes(route?.kind ?? "R") ? route!.kind : kinds.includes("R") ? "R" : kinds[0] });
+            }}
+            aria-label="Grand Prix"
+          >
+            {season?.events.map((ev) => (
+              <option key={ev.round} value={ev.round} disabled={!avail(ev.sessions, ev.built).length}>
+                R{String(ev.round).padStart(2, "0")} · {ev.name.replace("Grand Prix", "GP")}
+              </option>
+            ))}
+          </select>
+          {event && (
+            <div className="seg" role="group" aria-label="Session">
+              {(["R", "S"] as Kind[])
+                .filter((k) => event.sessions.includes(k))
+                .map((k) => (
+                  <button
+                    key={k}
+                    aria-pressed={route?.kind === k}
+                    disabled={!avail(event.sessions, event.built).includes(k)}
+                    onClick={() => onRoute({ kind: k })}
+                  >
+                    {k === "R" ? "RACE" : "SPRINT"}
+                  </button>
                 ))}
-              </div>
+            </div>
+          )}
+        </div>
+      )}
+      <button className="btn" onClick={onMethods}>
+        METHODS
+      </button>
+      {session && (
+        <div className="sources" title="Upstream data sources for this bundle">
+          {Object.entries({
+            FASTF1: session.meta.sources.fastf1,
+            OPENF1: session.meta.sources.openf1,
+            JOLPICA: session.meta.sources.jolpica,
+            "OPEN-METEO": session.meta.sources.open_meteo,
+          }).map(([k, v]) => (
+            <span key={k} title={v?.error ?? "ok"}>
+              <span className={`dot ${v?.ok ? "" : "off"}`} />
+              {k}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ session, tab, onTab }: { session: Session; tab: TabId; onTab: (t: TabId) => void }) {
+  const total = session.leader_ends.length;
+  const [lap, setLapState] = useState(total);
+  const [focus, setFocus] = useState<Set<string>>(new Set());
+  const setLap = useCallback((l: number) => setLapState(Math.min(Math.max(1, Math.round(l)), total)), [total]);
+  const toggleFocus = useCallback(
+    (code: string) =>
+      setFocus((f) => {
+        const n = new Set(f);
+        if (n.has(code)) n.delete(code);
+        else n.add(code);
+        return n;
+      }),
+    [],
+  );
+  const styles = useMemo(() => driverStyles(session.drivers), [session]);
+  const ctx: RaceCtx = { session, lap, setLap, focus, toggleFocus, styles };
+  const View = TABS.find((t) => t.id === tab)!.View;
+
+  return (
+    <RaceContext.Provider value={ctx}>
+      <Headline />
+      <Scrubber />
+      <div className="body">
+        <TimingTower />
+        <main className="main">
+          <nav className="tabs" role="tablist">
+            {TABS.map((t) => (
+              <button key={t.id} role="tab" aria-selected={t.id === tab} onClick={() => onTab(t.id)}>
+                {t.label}
+              </button>
+            ))}
+            {focus.size > 0 && (
+              <button className="hint" onClick={() => setFocus(new Set())} style={{ border: 0, background: "none", cursor: "pointer" }}>
+                highlighting {[...focus].join(", ")} · clear ✕
+              </button>
             )}
-          </div>
-        )}
+          </nav>
+          <View />
+        </main>
+      </div>
+    </RaceContext.Provider>
+  );
+}
 
-        {activeTab === "gaps" && raceState && (
-          <div className="panel">
-            <div className="panel-header">
-              <h2>Gap to leader</h2>
-              <span className="panel-sub">Cumulative time delta</span>
-            </div>
-            <GapChart drivers={raceState.drivers} currentLap={currentLap} />
-            <div className="panel-header" style={{ marginTop: 28 }}>
-              <h2>True race pace model</h2>
-              <span className="panel-sub">Regression on green-flag laps only</span>
-            </div>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {["Driver", "True Pace", "Deg/lap", "R²", "Clean Laps"].map((h) => (
-                    <th key={h}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {raceState.drivers.map((d) => {
-                  const pm = d.pace_model;
-                  const t = pm?.true_pace;
-                  const timeStr = t ? `${Math.floor(t/60)}:${(t%60).toFixed(3).padStart(6,"0")}` : "—";
-                  return (
-                    <tr key={d.driver}>
-                      <td style={{ color: "#fff", fontWeight: 600 }}>{d.driver}</td>
-                      <td style={{ fontFamily: "monospace" }}>{timeStr}</td>
-                      <td style={{ color: pm?.degradation_per_lap > 0 ? "#ff6b35" : "#4caf50" }}>
-                        {pm?.degradation_per_lap != null ? `${pm.degradation_per_lap > 0 ? "+" : ""}${pm.degradation_per_lap.toFixed(3)}s` : "—"}
-                      </td>
-                      <td>{pm?.r_squared?.toFixed(3) ?? "—"}</td>
-                      <td>{pm?.clean_lap_count ?? "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+function Headline() {
+  const { session, styles } = useRace();
+  const m = session.meta;
+  const byPos = [...session.drivers].sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
+  const winner = byPos[0];
+  const second = byPos[1];
+  const endOf = (code?: string) => {
+    const L = code ? session.laps[code] : undefined;
+    return L ? L.end[L.end.length - 1] : null;
+  };
+  const margin =
+    winner && second && session.laps[second.code]?.lap.length === session.laps[winner.code]?.lap.length
+      ? (endOf(second.code) ?? 0) - (endOf(winner.code) ?? 0)
+      : null;
+  const fl = fastestLap(session);
+  const best = session.strategy?.ranked[0];
+  const neutral = session.track_status.filter((p) => p.kind !== "YELLOW");
+  const count = (k: string) => neutral.filter((p) => p.kind === k).length;
+  const neutralText = neutral.length
+    ? [["SC", count("SC")], ["VSC", count("VSC")], ["RED", count("RED")]]
+        .filter(([, n]) => n)
+        .map(([k, n]) => `${n}× ${k}`)
+        .join(" · ")
+    : "none";
 
-        {activeTab === "tyres" && (
-          <div className="panel">
-            <div className="panel-header">
-              <h2>Tyre degradation model</h2>
-              <div style={{ display: "flex", gap: 6 }}>
-                {(["grip", "penalty"] as DegMode[]).map((m) => (
-                  <button key={m} className={`toggle-btn ${degMode === m ? "active" : ""}`} onClick={() => setDegMode(m)}>
-                    {m === "grip" ? "Grip %" : "Time loss"}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <TireDegradationChart curves={degCurves} mode={degMode} />
-            <div style={{ display: "flex", gap: 12, marginTop: 20, flexWrap: "wrap" }}>
-              {degCurves.map((c) => (
-                <div key={c.compound} className="compound-card">
-                  <div className="compound-dot" style={{
-                    backgroundColor: COMPOUND_COLORS[c.compound],
-                    border: c.compound === "HARD" ? "1px solid #555" : "none",
-                  }} />
-                  <div>
-                    <div className="compound-name">{c.compound}</div>
-                    <div className="compound-detail">Thermal cliff — lap {c.cliff_lap}</div>
-                    <div className="compound-detail">
-                      {degMode === "grip"
-                        ? `${c.grip_pct[c.cliff_lap]?.toFixed(1)}% grip at cliff`
-                        : `+${c.time_penalty_s[c.cliff_lap]?.toFixed(2)}s at cliff`}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+  return (
+    <div className="headline">
+      <div>
+        <div className="event-name">
+          {m.year} {m.event}
+          {m.kind === "S" && <span className="accent"> · SPRINT</span>}
+        </div>
+        <div className="event-sub">
+          ROUND {m.round} · {m.circuit?.name ?? m.location}, {m.country} · {m.date} · {m.total_laps} LAPS
+          {session.track ? ` · ${(session.track.length / 1000).toFixed(3)} KM` : ""}
+          {m.wet && <span className="accent"> · WET</span>}
+        </div>
+      </div>
+      <div className="kpis">
+        <Kpi k="Winner" v={<span style={{ color: winner ? styles[winner.code]?.color : undefined }}>{winner?.code ?? "—"}</span>} s={margin != null ? `by ${margin.toFixed(3)}s over ${second?.code}` : winner?.team} />
+        <Kpi k="Fastest lap" v={lapTime(fl?.time)} s={fl ? `${fl.code} · lap ${fl.lap}` : ""} />
+        <Kpi
+          k="Model optimum"
+          v={best ? best.stints.map((s) => COMPOUND_SHORT[s.compound]).join("–") : "n/a"}
+          s={best ? `${best.stops}-stop · ${best.stints.map((s) => s.laps).join("/")} laps` : m.wet ? "wet race" : "insufficient data"}
+        />
+        <Kpi k="Pit loss (green)" v={session.pit_loss.GREEN ? `${session.pit_loss.GREEN.median.toFixed(1)}s` : "—"} s={session.pit_loss.SC ? `SC stop ${session.pit_loss.SC.median.toFixed(1)}s` : `n=${session.pit_loss.GREEN?.n ?? 0}`} />
+        <Kpi k="Fuel + track" v={session.model ? `${signed(session.model.lap_coef, 3)}s` : "—"} s="per lap, fitted" />
+        <Kpi k="Neutralised" v={neutralText} s={`${session.race_control.length} RC messages`} />
+      </div>
+    </div>
+  );
+}
 
-        {activeTab === "strategy" && (
-          <div className="panel">
-            <div className="panel-header">
-              <h2>Optimal pit strategy</h2>
-              <span className="panel-sub">DP graph optimization · {selectedTrack}</span>
-            </div>
-            {strategy ? <StrategyViz strategy={strategy} /> : <div className="muted-msg">Computing strategy…</div>}
-
-            <div style={{ marginTop: 28 }}>
-              <div className="panel-header">
-                <h2>Try alternative strategies</h2>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                {[["MEDIUM","HARD"],["SOFT","MEDIUM"],["SOFT","HARD"],["MEDIUM","HARD","SOFT"]].map((combo) => (
-                  <button key={combo.join("-")} className="combo-btn"
-                    onClick={async () => {
-                      setLoading(true);
-                      try { setStrategy(await fetchOptimalStrategy(selectedTrack, combo as Compound[])); }
-                      finally { setLoading(false); }
-                    }}>
-                    {combo.join(" → ")}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
+function Kpi({ k, v, s }: { k: string; v: ReactNode; s?: ReactNode }) {
+  return (
+    <div className="kpi">
+      <div className="k">{k}</div>
+      <div className="v">{v}</div>
+      {s && <div className="s">{s}</div>}
     </div>
   );
 }
