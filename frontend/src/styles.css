@@ -714,10 +714,33 @@ table.data th.r {
 .feed-row.cat-sc .msg {
   color: var(--accent);
 }
-.feed-row audio {
-  width: 100%;
-  height: 26px;
-  margin-top: 4px;
+.radio-btn {
+  position: relative;
+  width: 40px;
+  height: 18px;
+  margin-right: 8px;
+  border: 1px solid var(--line-2);
+  background: var(--panel-2);
+  color: var(--accent);
+  font-size: 9px;
+  cursor: pointer;
+  overflow: hidden;
+  vertical-align: 1px;
+  border-radius: 2px;
+}
+.radio-btn i {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+}
+.radio-btn.playing {
+  border-color: var(--accent);
+}
+.radio-btn.error {
+  color: var(--dim);
+  cursor: not-allowed;
 }
 
 .bar-track {

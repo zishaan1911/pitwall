@@ -111,6 +111,8 @@ function PitWindow() {
             stroke: COMPOUND_COLOR[first],
             width: 2,
             dash: i === 1 ? [6, 4] : undefined,
+            // Short tyre life can leave only a few feasible pit laps; show them as points.
+            points: { show: true, size: 4, fill: COMPOUND_COLOR[first] },
           } satisfies uPlot.Series;
         }),
       ],

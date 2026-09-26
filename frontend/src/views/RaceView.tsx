@@ -210,15 +210,61 @@ function TeamRadio() {
             <div key={i} className={`feed-row ${r.lap > lap ? "future" : ""}`}>
               <span className="lap">{r.lap ? `L${r.lap}` : "PRE"}</span>
               <span>
+                <RadioClip url={r.url} />
                 <b style={{ color: r.driver ? styles[r.driver]?.color : undefined }}>{r.driver ?? "—"}</b>
                 <span className="dim"> · {clock(r.t, session.meta.start_s)}</span>
-                <audio controls preload="none" src={r.url} />
               </span>
             </div>
           ))}
         </div>
       )}
     </Panel>
+  );
+}
+
+// One clip plays at a time across the feed.
+let playing: HTMLAudioElement | null = null;
+
+function RadioClip({ url }: { url: string }) {
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const [state, setState] = useState<"idle" | "playing" | "error">("idle");
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => () => audio.current?.pause(), []);
+
+  const toggle = () => {
+    if (!audio.current) {
+      const a = new Audio(url);
+      a.ontimeupdate = () => setProgress(a.duration ? a.currentTime / a.duration : 0);
+      a.onended = () => {
+        setState("idle");
+        setProgress(0);
+      };
+      a.onpause = () => setState((s) => (s === "playing" ? "idle" : s));
+      a.onerror = () => setState("error");
+      audio.current = a;
+    }
+    const a = audio.current;
+    if (state === "playing") {
+      a.pause();
+      return;
+    }
+    if (playing && playing !== a) playing.pause();
+    playing = a;
+    a.play().then(() => setState("playing")).catch(() => setState("error"));
+  };
+
+  return (
+    <button
+      className={`radio-btn ${state}`}
+      onClick={toggle}
+      disabled={state === "error"}
+      aria-label={state === "playing" ? "Pause radio clip" : "Play radio clip"}
+      title={state === "error" ? "Clip unavailable" : undefined}
+    >
+      <span>{state === "playing" ? "❚❚" : state === "error" ? "✕" : "▶"}</span>
+      <i style={{ width: `${progress * 100}%` }} />
+    </button>
   );
 }
 
